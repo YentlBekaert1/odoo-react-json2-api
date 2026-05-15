@@ -21,9 +21,5 @@
   "bugs": {
     "url": "https://github.com/YentlBekaert1/odoo-react-json2-api/issues"
   },
-  "devDependencies": {
-    "react": "^19.2.6",
-    "typescript": "^6.0.3"
-  },
   "homepage": "https://github.com/YentlBekaert1/odoo-react-json2-api#readme"
 }

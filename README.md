@@ -1,7 +1,7 @@
-# react-odoo-jsonrpc
+# odoo-react-json2-api
 
-React hooks and context for the **Odoo External JSON-RPC API**, authenticated
-with an **API key** (Odoo ≥ 14).
+React hooks and context for the **Odoo External JSON-2 API**, authenticated
+with an **API key** (Odoo ≥ 19). https://www.odoo.com/documentation/19.0/developer/reference/external_api.html
 
 Every request uses HTTP Basic Auth (`username:api_key`) — no login call, no
 session cookies, no state to manage.
@@ -11,9 +11,7 @@ session cookies, no state to manage.
 ## Installation
 
 ```bash
-npm install react-odoo-jsonrpc
-# peer deps (if not already installed)
-npm install react react-dom
+npm iodoo-react-json2-api
 ```
 
 ---
