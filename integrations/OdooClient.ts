@@ -27,20 +27,74 @@ export class OdooJsonRpcError extends Error {
 export class OdooClient {
   private readonly baseUrl: string;
   private readonly db: string;
-  private readonly authHeader: string;
   private readonly extraHeaders: Record<string, string>;
   private readonly timeoutMs: number;
 
-  constructor(options: OdooClientOptions) {
-    this.baseUrl = options.baseUrl.replace(/\/$/, "");
-    this.db = options.db;
-    this.timeoutMs = options.timeoutMs ?? 30_000;
-    this.extraHeaders = options.headers ?? {};
+  /** Pre-built Basic auth header from app-level credentials, or null. */
+  private readonly appAuthHeader: string | null;
 
-    // Build the Basic auth header once; reuse on every request.
-    // btoa is available in all modern browsers and in Node ≥ 16.
-    this.authHeader =
-        "Basic " + btoa(`${options.username}:${options.apiKey}`);
+  /** Runtime per-user credentials (overrides app-level when set). */
+  private userCredentials: OdooCredentials | null = null;
+
+  constructor(options: OdooClientOptions) {
+    this.baseUrl     = options.baseUrl.replace(/\/$/, "");
+    this.db          = options.db;
+    this.extraHeaders = options.headers ?? {};
+    this.timeoutMs   = options.timeoutMs ?? 30_000;
+
+    this.appAuthHeader =
+        options.username && options.apiKey
+            ? OdooClient.buildBasicHeader(options.username, options.apiKey)
+            : null;
+  }
+
+  // ─── Credential helpers ────────────────────────────────────────────────────
+
+  private static buildBasicHeader(username: string, apiKey: string): string {
+    return "Basic " + btoa(`${username}:${apiKey}`);
+  }
+
+  /**
+   * Set (or replace) per-user credentials at runtime.
+   * These take precedence over any app-level credentials.
+   */
+  setCredentials(username: string, apiKey: string): void {
+    this.userCredentials = { username, apiKey };
+  }
+
+  /**
+   * Clear per-user credentials (e.g. on logout).
+   * If app-level credentials are configured, those continue to be used.
+   */
+  clearCredentials(): void {
+    this.userCredentials = null;
+  }
+
+  /** Returns true if any credentials (app- or user-level) are available. */
+  get hasCredentials(): boolean {
+    return this.userCredentials !== null || this.appAuthHeader !== null;
+  }
+
+  /** The active username, or null if no credentials are set. */
+  get activeUsername(): string | null {
+    return this.userCredentials?.username ?? null;
+  }
+
+  private get authHeader(): string {
+    if (this.userCredentials) {
+      return OdooClient.buildBasicHeader(
+          this.userCredentials.username,
+          this.userCredentials.apiKey
+      );
+    }
+    if (this.appAuthHeader) {
+      return this.appAuthHeader;
+    }
+    throw new OdooJsonRpcError(
+        "No credentials available. " +
+        "Either provide `username` + `apiKey` in OdooClientOptions (app-level), " +
+        "or call `client.setCredentials(username, apiKey)` / use `useOdooUserAuth()` (user-level)."
+    );
   }
 
   // ─── Low-level RPC ─────────────────────────────────────────────────────────

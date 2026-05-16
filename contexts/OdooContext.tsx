@@ -2,7 +2,7 @@ import {
   createContext,
   useContext,
   useMemo,
-  type ReactNode,
+  type ReactNode, useState, useCallback,
 } from "react";
 
 import { OdooClient } from "../integrations/OdooClient.ts";
@@ -13,9 +13,33 @@ import type { OdooClientOptions } from "../types/types.ts";
 
 export interface OdooContextValue {
   client: OdooClient;
+  /**
+   * Auth mode inferred from the options passed to `<OdooProvider>`:
+   * - `"app"`  — `username` + `apiKey` were supplied; all requests share them.
+   * - `"user"` — no credentials in options; each user sets their own key.
+   */
+  authMode: "app" | "user";
+  /**
+   * True when credentials are available (always true in app mode;
+   * true in user mode only after `login()` has been called).
+   */
+  isAuthenticated: boolean;
+  /** Active username, or null when no user credentials are set (user mode). */
+  username: string | null;
+  /**
+   * Set the active user's credentials (user-level auth mode).
+   * Has no effect in app mode.
+   */
+  login: (username: string, apiKey: string) => void;
+  /**
+   * Clear the active user's credentials (user-level auth mode).
+   * Has no effect in app mode.
+   */
+  logout: () => void;
 }
 
 const OdooContext = createContext<OdooContextValue | null>(null);
+
 
 // ─── Provider ─────────────────────────────────────────────────────────────────
 
@@ -47,14 +71,39 @@ export interface OdooProviderProps {
  * </OdooProvider>
  */
 export function OdooProvider({ options, children }: OdooProviderProps) {
-  // Recreate the client only when the base connection params change.
+  const authMode: "app" | "user" =
+      options.username && options.apiKey ? "app" : "user";
+
+  // Stable client — recreated only when the base connection params change.
   const client = useMemo(
-    () => new OdooClient(options),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [options.baseUrl, options.db, options.username, options.apiKey]
+      () => new OdooClient(options),
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      [options.baseUrl, options.db, options.username, options.apiKey]
   );
 
-  const value = useMemo<OdooContextValue>(() => ({ client }), [client]);
+  // Track user-level auth state in React so consumers re-render on change.
+  const [username, setUsername] = useState<string | null>(null);
+
+  const login = useCallback(
+      (uname: string, apiKey: string) => {
+        client.setCredentials(uname, apiKey);
+        setUsername(uname);
+      },
+      [client]
+  );
+
+  const logout = useCallback(() => {
+    client.clearCredentials();
+    setUsername(null);
+  }, [client]);
+
+  const isAuthenticated =
+      authMode === "app" ? true : username !== null;
+
+  const value = useMemo<OdooContextValue>(
+      () => ({ client, authMode, isAuthenticated, username, login, logout }),
+      [client, authMode, isAuthenticated, username, login, logout]
+  );
 
   return <OdooContext.Provider value={value}>{children}</OdooContext.Provider>;
 }
@@ -66,8 +115,8 @@ export function useOdoo(): OdooContextValue {
   const ctx = useContext(OdooContext);
   if (!ctx) {
     throw new Error(
-      "useOdoo() must be called inside an <OdooProvider>. " +
-        "Make sure your component tree is wrapped with <OdooProvider options={...}>."
+        "useOdoo() must be called inside an <OdooProvider>. " +
+        "Wrap your component tree with <OdooProvider options={...}>."
     );
   }
   return ctx;

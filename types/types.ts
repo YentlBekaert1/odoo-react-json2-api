@@ -26,43 +26,65 @@ export interface JsonRpcError {
   };
 }
 
+// ─── Credentials ──────────────────────────────────────────────────────────────
+
+/**
+ * A username + API key pair, used for HTTP Basic Auth on every request.
+ * In app-level mode these come from OdooClientOptions.
+ * In user-level mode they are supplied at runtime via `setUserCredentials()`.
+ */
+export interface OdooCredentials {
+  username: string;
+  apiKey: string;
+}
+
 // ─── Client options ───────────────────────────────────────────────────────────
 
+/**
+ * ## App-level auth (single shared API key)
+ * Supply `username` + `apiKey` here. Every request uses these credentials.
+ *
+ * ```ts
+ * { baseUrl: "https://mycompany.odoo.com", db: "mycompany",
+ *   username: "admin@mycompany.com", apiKey: "key_xxx" }
+ * ```
+ *
+ * ## User-level auth (per-user API keys)
+ * Omit `username` and `apiKey`. Call `client.setCredentials(username, apiKey)`
+ * (or use the `useOdooUserAuth()` hook) to set them at runtime per user.
+ *
+ * ```ts
+ * { baseUrl: "https://mycompany.odoo.com", db: "mycompany" }
+ * ```
+ */
 export interface OdooClientOptions {
-  /**
-   * Base URL of your Odoo instance, no trailing slash.
-   * e.g. "https://mycompany.odoo.com"
-   */
+  /** Base URL of the Odoo instance, no trailing slash. */
   baseUrl: string;
-  /** Odoo database name */
+  /** Odoo database name. */
   db: string;
   /**
-   * Odoo login (email / username) that owns the API key.
-   * Sent as the HTTP Basic Auth username on every request.
+   * App-level username (Odoo login / email).
+   * Omit when using per-user API keys.
    */
-  username: string;
+  username?: string;
   /**
-   * Odoo External API key generated via
-   * Settings → Technical → API Keys (requires developer mode).
-   * Sent as the HTTP Basic Auth password on every request.
-   *
-   * ⚠️  Never hard-code this in client-side source.
-   *     Load it from an environment variable or a server-side config endpoint.
+   * App-level External API key.
+   * Omit when using per-user API keys.
    */
-  apiKey: string;
-  /** Additional HTTP headers added to every request */
+  apiKey?: string;
+  /** Additional HTTP headers on every request. */
   headers?: Record<string, string>;
-  /** Request timeout in milliseconds (default: 30 000) */
+  /** Request timeout in milliseconds (default: 30 000). */
   timeoutMs?: number;
 }
 
 // ─── Domain / search helpers ─────────────────────────────────────────────────
 
 export type OdooDomainOperator =
-  | "="  | "!=" | "<"  | "<=" | ">"  | ">="
-  | "like" | "ilike" | "not like" | "not ilike"
-  | "in"   | "not in"
-  | "child_of" | "parent_of";
+    | "="  | "!=" | "<"  | "<=" | ">"  | ">="
+    | "like" | "ilike" | "not like" | "not ilike"
+    | "in"   | "not in"
+    | "child_of" | "parent_of";
 
 export type OdooDomainLeaf = [string, OdooDomainOperator, unknown];
 export type OdooDomainNode = "&" | "|" | "!";
@@ -90,4 +112,16 @@ export interface UseOdooMutationReturn<TArgs, TResult> {
   isLoading: boolean;
   error: Error | null;
   reset: () => void;
+}
+
+/** Returned by `useOdooUserAuth()` — only meaningful in user-level auth mode. */
+export interface UseOdooUserAuthReturn {
+  /** Whether the current user has credentials set. */
+  isAuthenticated: boolean;
+  /** The active username, or null if not set. */
+  username: string | null;
+  /** Set (or replace) the active user's credentials. */
+  login: (username: string, apiKey: string) => void;
+  /** Clear the active user's credentials. */
+  logout: () => void;
 }

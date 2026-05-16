@@ -3,15 +3,20 @@
 React hooks and context for the **Odoo External JSON-2 API**, authenticated
 with an **API key** (Odoo ≥ 19). https://www.odoo.com/documentation/19.0/developer/reference/external_api.html
 
-Every request uses HTTP Basic Auth (`username:api_key`) — no login call, no
-session cookies, no state to manage.
+Supports two auth modes — pick the one that fits your use case:
+
+| Mode | When to use |
+|---|---|
+| **App-level** | One shared service-account key for the whole app (server-side rendering, internal tools, single-tenant SaaS) |
+| **User-level** | Every user provides their own Odoo API key at runtime (multi-user apps, portals) |
+
 
 ---
 
 ## Installation
 
 ```bash
-npm iodoo-react-json2-api
+npm i odoo-react-json2-api
 ```
 
 ---
@@ -30,136 +35,138 @@ npm iodoo-react-json2-api
 
 ---
 
-## Quick start
+## Mode 1 — App-level auth (shared API key)
 
-### 1. Wrap your app with `<OdooProvider>`
+One key is set in `<OdooProvider>` and used for every request.
 
 ```tsx
 // main.tsx
-import React from "react";
-import ReactDOM from "react-dom/client";
 import { OdooProvider } from "react-odoo-jsonrpc";
-import App from "./App";
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <OdooProvider
-    options={{
-      baseUrl:  import.meta.env.VITE_ODOO_URL,   // "https://mycompany.odoo.com"
-      db:       import.meta.env.VITE_ODOO_DB,    // "mycompany"
-      username: import.meta.env.VITE_ODOO_USER,  // "admin@mycompany.com"
-      apiKey:   import.meta.env.VITE_ODOO_KEY,   // "your-api-key"
-    }}
-  >
-    <App />
-  </OdooProvider>
-);
+<OdooProvider
+  options={{
+    baseUrl:  import.meta.env.VITE_ODOO_URL,   // "https://mycompany.odoo.com"
+    db:       import.meta.env.VITE_ODOO_DB,
+    username: import.meta.env.VITE_ODOO_USER,  // "admin@mycompany.com"
+    apiKey:   import.meta.env.VITE_ODOO_KEY,
+  }}
+>
+  <App />
+</OdooProvider>
 ```
 
-### 2. Query records
+All data hooks work immediately — no login step needed.
 
 ```tsx
 import { useOdooSearchRead } from "react-odoo-jsonrpc";
 
-interface Partner {
-  id: number;
-  name: string;
-  email: string;
-}
-
 function PartnerList() {
-  const { data: partners, isLoading, error } = useOdooSearchRead<Partner>(
+  const { data, isLoading, error } = useOdooSearchRead(
     "res.partner",
     [["is_company", "=", true]],
-    { fields: ["id", "name", "email"], limit: 50, order: "name asc" }
-  );
-
-  if (isLoading) return <p>Loading…</p>;
-  if (error)     return <p>Error: {error.message}</p>;
-
-  return (
-    <ul>
-      {partners?.map((p) => (
-        <li key={p.id}>{p.name} — {p.email}</li>
-      ))}
-    </ul>
-  );
-}
-```
-
-### 3. Fetch a single record
-
-```tsx
-import { useOdooRecord } from "react-odoo-jsonrpc";
-
-function PartnerDetail({ id }: { id: number }) {
-  const { data: partner, isLoading } = useOdooRecord(
-    "res.partner",
-    id,
-    ["name", "email", "phone", "street"]
-  );
-
-  if (isLoading || !partner) return <p>Loading…</p>;
-  return <div>{partner.name as string}</div>;
-}
-```
-
-### 4. Mutate data
-
-```tsx
-import { useOdooMutation } from "react-odoo-jsonrpc";
-
-function CreatePartnerButton() {
-  const { mutate: createPartner, isLoading, error } = useOdooMutation(
-    (client, values: { name: string; email: string }) =>
-      client.create("res.partner", values)
-  );
-
-  return (
-    <>
-      <button
-        disabled={isLoading}
-        onClick={() => createPartner({ name: "ACME", email: "info@acme.com" })}
-      >
-        {isLoading ? "Saving…" : "Create partner"}
-      </button>
-      {error && <p style={{ color: "red" }}>{error.message}</p>}
-    </>
-  );
-}
-```
-
-### 5. Custom / advanced queries
-
-```tsx
-import { useOdooQuery } from "react-odoo-jsonrpc";
-
-function SaleStats() {
-  const { data } = useOdooQuery(
-    (client) =>
-      client.callMethod("sale.order", "read_group", [
-        [["state", "=", "sale"]],
-        ["amount_total:sum", "state"],
-        ["state"],
-      ]),
-    []
+    { fields: ["id", "name", "email"], limit: 50 }
   );
   // ...
 }
 ```
 
-### 6. Imperative access
+---
+
+## Mode 2 — User-level auth (per-user API keys)
+
+Omit `username` and `apiKey` from the provider options.
+Each user supplies their own key at runtime via `useOdooUserAuth()`.
+
+### Set up the provider
 
 ```tsx
-import { useOdooClient } from "react-odoo-jsonrpc";
+// main.tsx
+<OdooProvider
+  options={{
+    baseUrl: "https://mycompany.odoo.com",
+    db:      "mycompany",
+    // no username / apiKey here
+  }}
+>
+  <App />
+</OdooProvider>
+```
 
-function MyComponent() {
-  const client = useOdooClient();
+### Build a login form
 
-  async function handleArchive(id: number) {
-    await client.write("res.partner", [id], { active: false });
+```tsx
+import { useOdooUserAuth } from "react-odoo-jsonrpc";
+
+function ApiKeyLogin() {
+  const { login, logout, isAuthenticated, username } = useOdooUserAuth();
+  const [email, setEmail] = useState("");
+  const [key,   setKey]   = useState("");
+
+  if (isAuthenticated) {
+    return (
+      <div>
+        Logged in as <strong>{username}</strong>
+        <button onClick={logout}>Sign out</button>
+      </div>
+    );
   }
+
+  return (
+    <div>
+      <input
+        value={email}
+        onChange={e => setEmail(e.target.value)}
+        placeholder="Odoo email"
+      />
+      <input
+        value={key}
+        onChange={e => setKey(e.target.value)}
+        placeholder="API key"
+        type="password"
+      />
+      <button onClick={() => login(email, key)}>Connect</button>
+    </div>
+  );
+}
+```
+
+### Data hooks work exactly the same
+
+They wait silently until credentials are set, then run automatically.
+
+```tsx
+function Dashboard() {
+  const { isAuthenticated } = useOdooUserAuth();
+  const { data: orders } = useOdooSearchRead(
+    "sale.order",
+    [["state", "=", "sale"]],
+    { fields: ["name", "partner_id", "amount_total"], limit: 20 }
+  );
+
+  if (!isAuthenticated) return <ApiKeyLogin />;
   // ...
 }
+```
+
+---
+
+## Mixed mode
+
+You can have app-level credentials as a fallback **and** allow users to
+override with their own key. User credentials always take precedence.
+
+```tsx
+<OdooProvider
+  options={{
+    baseUrl:  "https://mycompany.odoo.com",
+    db:       "mycompany",
+    username: import.meta.env.VITE_ODOO_SERVICE_USER,
+    apiKey:   import.meta.env.VITE_ODOO_SERVICE_KEY,
+  }}
+>
+  <App />   {/* uses service account by default */}
+            {/* any component can call login() to switch to a user key */}
+</OdooProvider>
 ```
 
 ---
@@ -170,64 +177,75 @@ function MyComponent() {
 
 | Prop | Type | Required | Description |
 |---|---|---|---|
-| `options` | `OdooClientOptions` | ✅ | Connection config (see below) |
+| `options` | `OdooClientOptions` | ✅ | Connection config |
 | `children` | `ReactNode` | ✅ | |
 
 ### `OdooClientOptions`
 
 ```ts
 interface OdooClientOptions {
-  baseUrl:   string;  // "https://mycompany.odoo.com"
-  db:        string;  // Odoo database name
-  username:  string;  // Odoo login / email
-  apiKey:    string;  // External API key from Settings → Technical → API Keys
-  headers?:  Record<string, string>; // extra HTTP headers
-  timeoutMs?: number; // default: 30 000
+  baseUrl:   string;   // "https://mycompany.odoo.com"
+  db:        string;   // database name
+  username?: string;   // app-level login (omit for user-level mode)
+  apiKey?:   string;   // app-level API key (omit for user-level mode)
+  headers?:  Record<string, string>;
+  timeoutMs?: number;  // default: 30 000
 }
 ```
 
 ### Hooks
 
-| Hook | Returns | Description |
-|---|---|---|
-| `useOdooSearchRead(model, domain?, opts?)` | `UseOdooQueryReturn<T[]>` | Search & read records, re-runs when args change |
-| `useOdooRecord(model, id, fields?)` | `UseOdooQueryReturn<T\|null>` | Single record by ID |
-| `useOdooQuery(fn, deps)` | `UseOdooQueryReturn<T>` | Generic declarative query |
-| `useOdooMutation(fn)` | `UseOdooMutationReturn<A, R>` | Imperative write operations |
-| `useOdooClient()` | `OdooClient` | Raw client instance |
+| Hook | Description |
+|---|---|
+| `useOdooUserAuth()` | Auth state + `login(username, apiKey)` + `logout()` |
+| `useOdooSearchRead(model, domain?, opts?)` | Search & read records |
+| `useOdooRecord(model, id, fields?)` | Single record by ID |
+| `useOdooQuery(fn, deps)` | Generic declarative query |
+| `useOdooMutation(fn)` | Imperative write operations |
+| `useOdooClient()` | Raw `OdooClient` instance |
+
+### `useOdooUserAuth()` return value
+
+```ts
+{
+  isAuthenticated: boolean;   // true once login() has been called
+  username: string | null;    // active username, or null
+  login(username, apiKey): void;
+  logout(): void;
+}
+```
 
 ### `OdooClient` methods
 
 | Method | Description |
 |---|---|
+| `setCredentials(username, apiKey)` | Set user-level credentials |
+| `clearCredentials()` | Clear user-level credentials |
+| `hasCredentials` | Whether any credentials are active |
+| `activeUsername` | The current username, or null |
 | `searchRead(model, domain, opts)` | Search + read fields |
-| `search(model, domain, opts)` | Return matching IDs only |
+| `search(model, domain, opts)` | Return matching IDs |
 | `read(model, ids, fields)` | Read by IDs |
-| `create(model, values)` | Create record → returns new ID |
+| `create(model, values)` | Create record → new ID |
 | `write(model, ids, values)` | Update records |
 | `unlink(model, ids)` | Delete records |
 | `searchCount(model, domain)` | Count matching records |
 | `fieldsGet(model, attributes)` | Field metadata |
-| `callMethod(model, method, args, kwargs)` | Call any ORM method |
-| `callKw(model, method, args, kwargs)` | Raw `/web/dataset/call_kw` |
-| `rpc(path, params)` | Raw JSON-RPC call to any path |
+| `callMethod(model, method, args, kwargs)` | Any ORM method |
+| `callKw(model, method, args, kwargs)` | Raw `call_kw` |
+| `rpc(path, params)` | Raw JSON-RPC call |
 
 ---
 
 ## CORS note
 
-If you're calling Odoo directly from a browser, Odoo must allow
-cross-origin requests from your domain.
-
-In development, proxy through Vite to avoid CORS issues:
+For local development, proxy through Vite to avoid CORS issues:
 
 ```ts
 // vite.config.ts
 export default {
   server: {
-    proxy: {
-      "/web": "http://localhost:8069",
-    },
+    proxy: { "/web": "http://localhost:8069" },
   },
 };
 ```
