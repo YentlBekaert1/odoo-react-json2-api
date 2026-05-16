@@ -35,9 +35,7 @@ npm i odoo-react-json2-api
 
 ---
 
-## Mode 1 — App-level auth (shared API key)
-
-One key is set in `<OdooProvider>` and used for every request.
+## Mode 1 — App-level (shared service-account key)
 
 ```tsx
 // main.tsx
@@ -46,16 +44,16 @@ import { OdooProvider } from "react-odoo-jsonrpc";
 <OdooProvider
   options={{
     baseUrl:  import.meta.env.VITE_ODOO_URL,   // "https://mycompany.odoo.com"
-    db:       import.meta.env.VITE_ODOO_DB,
-    username: import.meta.env.VITE_ODOO_USER,  // "admin@mycompany.com"
-    apiKey:   import.meta.env.VITE_ODOO_KEY,
+    db:       import.meta.env.VITE_ODOO_DB,    // "mycompany"
+    username: import.meta.env.VITE_ODOO_USER,  // "service@mycompany.com"
+    apiKey:   import.meta.env.VITE_ODOO_KEY,   // External API key
   }}
 >
   <App />
 </OdooProvider>
 ```
 
-All data hooks work immediately — no login step needed.
+All data hooks work immediately — no user action needed.
 
 ```tsx
 import { useOdooSearchRead } from "react-odoo-jsonrpc";
@@ -72,101 +70,143 @@ function PartnerList() {
 
 ---
 
-## Mode 2 — User-level auth (per-user API keys)
+## Mode 2 — User-level (per-user API keys)
 
-Omit `username` and `apiKey` from the provider options.
-Each user supplies their own key at runtime via `useOdooUserAuth()`.
+The user's **email is already known** from your own session / auth system —
+you pass it to the provider. The user only needs to supply their Odoo API key
+**once** in their account settings. No login form, no username field.
 
-### Set up the provider
+### 1. Pass the current user's email to the provider
 
 ```tsx
-// main.tsx
-<OdooProvider
-  options={{
-    baseUrl: "https://mycompany.odoo.com",
-    db:      "mycompany",
-    // no username / apiKey here
-  }}
->
-  <App />
-</OdooProvider>
+// App.tsx  (or wherever you have your own auth session)
+import { OdooProvider } from "react-odoo-jsonrpc";
+import { useCurrentUser } from "./auth"; // your own auth hook
+
+function App() {
+  const { email } = useCurrentUser(); // already authenticated in your app
+
+  return (
+    <OdooProvider
+      options={{
+        baseUrl:  "https://mycompany.odoo.com",
+        db:       "mycompany",
+        username: email,   // user's Odoo email — no apiKey here
+      }}
+    >
+      <Routes />
+    </OdooProvider>
+  );
+}
 ```
 
-### Build a login form
+### 2. Add an "API key" field to the user's account settings page
 
 ```tsx
-import { useOdooUserAuth } from "react-odoo-jsonrpc";
+import { useOdooApiKey } from "react-odoo-jsonrpc";
 
-function ApiKeyLogin() {
-  const { login, logout, isAuthenticated, username } = useOdooUserAuth();
-  const [email, setEmail] = useState("");
-  const [key,   setKey]   = useState("");
+function OdooIntegrationSettings() {
+  const { isConnected, saveApiKey, clearApiKey } = useOdooApiKey();
+  const [input, setInput] = useState("");
 
-  if (isAuthenticated) {
+  if (isConnected) {
     return (
       <div>
-        Logged in as <strong>{username}</strong>
-        <button onClick={logout}>Sign out</button>
+        <p>✅ Odoo is connected to your account.</p>
+        <button onClick={clearApiKey}>Disconnect</button>
       </div>
     );
   }
 
   return (
     <div>
+      <p>
+        Paste your Odoo API key to connect your account.
+        Generate one in Odoo under <strong>Settings → Technical → API Keys</strong>.
+      </p>
       <input
-        value={email}
-        onChange={e => setEmail(e.target.value)}
-        placeholder="Odoo email"
-      />
-      <input
-        value={key}
-        onChange={e => setKey(e.target.value)}
-        placeholder="API key"
+        value={input}
+        onChange={e => setInput(e.target.value)}
+        placeholder="Odoo API key"
         type="password"
       />
-      <button onClick={() => login(email, key)}>Connect</button>
+      <button onClick={() => { saveApiKey(input); setInput(""); }}>
+        Save & Connect
+      </button>
     </div>
   );
 }
 ```
 
-### Data hooks work exactly the same
-
-They wait silently until credentials are set, then run automatically.
+### 3. Data hooks work exactly the same — they just wait until connected
 
 ```tsx
 function Dashboard() {
-  const { isAuthenticated } = useOdooUserAuth();
-  const { data: orders } = useOdooSearchRead(
+  const { isConnected } = useOdooApiKey();
+  const { data: orders, isLoading } = useOdooSearchRead(
     "sale.order",
     [["state", "=", "sale"]],
-    { fields: ["name", "partner_id", "amount_total"], limit: 20 }
+    { fields: ["name", "amount_total"], limit: 20 }
   );
 
-  if (!isAuthenticated) return <ApiKeyLogin />;
+  if (!isConnected) {
+    return <p>Connect your Odoo account in settings to see your orders.</p>;
+  }
+  if (isLoading) return <p>Loading…</p>;
   // ...
 }
 ```
 
+The query fires **automatically** the moment `saveApiKey()` is called.
+No re-mounts, no manual triggers.
+
 ---
 
-## Mixed mode
+## Persisting the API key across reloads
 
-You can have app-level credentials as a fallback **and** allow users to
-override with their own key. User credentials always take precedence.
+`saveApiKey()` only stores the key in memory. To survive a page reload,
+persist it yourself (e.g. in `localStorage` or your backend) and restore it:
 
 ```tsx
-<OdooProvider
-  options={{
-    baseUrl:  "https://mycompany.odoo.com",
-    db:       "mycompany",
-    username: import.meta.env.VITE_ODOO_SERVICE_USER,
-    apiKey:   import.meta.env.VITE_ODOO_SERVICE_KEY,
-  }}
->
-  <App />   {/* uses service account by default */}
-            {/* any component can call login() to switch to a user key */}
-</OdooProvider>
+// On app boot — restore from storage
+const savedKey = localStorage.getItem("odoo_api_key");
+
+function App() {
+  const { email } = useCurrentUser();
+  return (
+    <OdooProvider options={{ baseUrl, db, username: email }}>
+      <KeyRestorer savedKey={savedKey} />
+      <Routes />
+    </OdooProvider>
+  );
+}
+
+// Tiny helper component that restores the key once on mount
+function KeyRestorer({ savedKey }: { savedKey: string | null }) {
+  const { saveApiKey } = useOdooApiKey();
+  useEffect(() => {
+    if (savedKey) saveApiKey(savedKey);
+  }, []); // eslint-disable-line
+  return null;
+}
+
+// When saving from the settings form, also persist:
+function OdooIntegrationSettings() {
+  const { isConnected, saveApiKey, clearApiKey } = useOdooApiKey();
+  const [input, setInput] = useState("");
+
+  function handleSave() {
+    saveApiKey(input);
+    localStorage.setItem("odoo_api_key", input); // persist
+    setInput("");
+  }
+
+  function handleDisconnect() {
+    clearApiKey();
+    localStorage.removeItem("odoo_api_key");
+  }
+  // ...
+}
 ```
 
 ---
@@ -186,8 +226,8 @@ override with their own key. User credentials always take precedence.
 interface OdooClientOptions {
   baseUrl:   string;   // "https://mycompany.odoo.com"
   db:        string;   // database name
-  username?: string;   // app-level login (omit for user-level mode)
-  apiKey?:   string;   // app-level API key (omit for user-level mode)
+  username:  string;   // always required — service account or current user's email
+  apiKey?:   string;   // app-level key; omit for user-level mode
   headers?:  Record<string, string>;
   timeoutMs?: number;  // default: 30 000
 }
@@ -197,21 +237,20 @@ interface OdooClientOptions {
 
 | Hook | Description |
 |---|---|
-| `useOdooUserAuth()` | Auth state + `login(username, apiKey)` + `logout()` |
+| `useOdooApiKey()` | `isConnected`, `saveApiKey(key)`, `clearApiKey()` |
 | `useOdooSearchRead(model, domain?, opts?)` | Search & read records |
 | `useOdooRecord(model, id, fields?)` | Single record by ID |
 | `useOdooQuery(fn, deps)` | Generic declarative query |
 | `useOdooMutation(fn)` | Imperative write operations |
 | `useOdooClient()` | Raw `OdooClient` instance |
 
-### `useOdooUserAuth()` return value
+### `useOdooApiKey()` return value
 
 ```ts
 {
-  isAuthenticated: boolean;   // true once login() has been called
-  username: string | null;    // active username, or null
-  login(username, apiKey): void;
-  logout(): void;
+  isConnected: boolean;          // true once saveApiKey() has been called
+  saveApiKey(apiKey: string): void;
+  clearApiKey(): void;
 }
 ```
 
@@ -219,10 +258,10 @@ interface OdooClientOptions {
 
 | Method | Description |
 |---|---|
-| `setCredentials(username, apiKey)` | Set user-level credentials |
-| `clearCredentials()` | Clear user-level credentials |
-| `hasCredentials` | Whether any credentials are active |
-| `activeUsername` | The current username, or null |
+| `setApiKey(apiKey)` | Set the user's runtime API key |
+| `clearApiKey()` | Remove the runtime API key |
+| `isConnected` | Whether any API key is active |
+| `activeUsername` | The fixed username from options |
 | `searchRead(model, domain, opts)` | Search + read fields |
 | `search(model, domain, opts)` | Return matching IDs |
 | `read(model, ids, fields)` | Read by IDs |
@@ -232,7 +271,6 @@ interface OdooClientOptions {
 | `searchCount(model, domain)` | Count matching records |
 | `fieldsGet(model, attributes)` | Field metadata |
 | `callMethod(model, method, args, kwargs)` | Any ORM method |
-| `callKw(model, method, args, kwargs)` | Raw `call_kw` |
 | `rpc(path, params)` | Raw JSON-RPC call |
 
 ---

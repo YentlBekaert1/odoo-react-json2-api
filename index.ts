@@ -6,7 +6,7 @@ export { OdooProvider, useOdoo } from "./contexts/OdooContext";
 export type { OdooContextValue, OdooProviderProps } from "./contexts/OdooContext";
 
 // Hooks
-export { useOdooUserAuth } from "./hooks/useOdooUserAuth";
+export { useOdooApiKey } from "./hooks/useOdooApiKey";
 export { useOdooClient } from "./hooks/useOdooClient";
 export { useOdooQuery } from "./hooks/useOdooQuery";
 export { useOdooMutation } from "./hooks/useOdooMutation";
@@ -18,7 +18,6 @@ export type {
   JsonRpcRequest,
   JsonRpcResponse,
   JsonRpcError,
-  OdooCredentials,
   OdooClientOptions,
   OdooDomain,
   OdooDomainLeaf,
@@ -27,5 +26,5 @@ export type {
   SearchReadOptions,
   UseOdooQueryReturn,
   UseOdooMutationReturn,
-  UseOdooUserAuthReturn,
+  UseOdooApiKeyReturn,
 } from "./types/types";

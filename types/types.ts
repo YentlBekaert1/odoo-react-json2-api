@@ -26,36 +26,16 @@ export interface JsonRpcError {
   };
 }
 
-// ─── Credentials ──────────────────────────────────────────────────────────────
-
-/**
- * A username + API key pair, used for HTTP Basic Auth on every request.
- * In app-level mode these come from OdooClientOptions.
- * In user-level mode they are supplied at runtime via `setUserCredentials()`.
- */
-export interface OdooCredentials {
-  username: string;
-  apiKey: string;
-}
-
 // ─── Client options ───────────────────────────────────────────────────────────
 
 /**
- * ## App-level auth (single shared API key)
- * Supply `username` + `apiKey` here. Every request uses these credentials.
+ * ## App-level auth
+ * Provide `username` + `apiKey`. All requests share these credentials.
  *
- * ```ts
- * { baseUrl: "https://mycompany.odoo.com", db: "mycompany",
- *   username: "admin@mycompany.com", apiKey: "key_xxx" }
- * ```
- *
- * ## User-level auth (per-user API keys)
- * Omit `username` and `apiKey`. Call `client.setCredentials(username, apiKey)`
- * (or use the `useOdooUserAuth()` hook) to set them at runtime per user.
- *
- * ```ts
- * { baseUrl: "https://mycompany.odoo.com", db: "mycompany" }
- * ```
+ * ## User-level auth
+ * Provide `username` (the user's Odoo login, known from your own app's session).
+ * Omit `apiKey` — the user will supply only their personal API key at runtime
+ * via `useOdooApiKey()` or `client.setApiKey(key)`.
  */
 export interface OdooClientOptions {
   /** Base URL of the Odoo instance, no trailing slash. */
@@ -63,13 +43,16 @@ export interface OdooClientOptions {
   /** Odoo database name. */
   db: string;
   /**
-   * App-level username (Odoo login / email).
-   * Omit when using per-user API keys.
+   * The Odoo login / email for this client.
+   *
+   * - App-level: the service-account email.
+   * - User-level: the current user's Odoo email (from your app's own auth).
+   *   Pass this in so the user never has to type it themselves.
    */
-  username?: string;
+  username: string;
   /**
    * App-level External API key.
-   * Omit when using per-user API keys.
+   * Omit when every user supplies their own key at runtime.
    */
   apiKey?: string;
   /** Additional HTTP headers on every request. */
@@ -114,14 +97,16 @@ export interface UseOdooMutationReturn<TArgs, TResult> {
   reset: () => void;
 }
 
-/** Returned by `useOdooUserAuth()` — only meaningful in user-level auth mode. */
-export interface UseOdooUserAuthReturn {
-  /** Whether the current user has credentials set. */
-  isAuthenticated: boolean;
-  /** The active username, or null if not set. */
-  username: string | null;
-  /** Set (or replace) the active user's credentials. */
-  login: (username: string, apiKey: string) => void;
-  /** Clear the active user's credentials. */
-  logout: () => void;
+/**
+ * Returned by `useOdooApiKey()`.
+ * Used in user-level auth mode where the username is already known
+ * and the user only needs to supply their personal API key.
+ */
+export interface UseOdooApiKeyReturn {
+  /** True once the user has saved their API key. */
+  isConnected: boolean;
+  /** Save (or replace) the user's API key. */
+  saveApiKey: (apiKey: string) => void;
+  /** Remove the user's API key (disconnects from Odoo). */
+  clearApiKey: () => void;
 }

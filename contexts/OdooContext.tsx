@@ -1,42 +1,43 @@
 import {
-  createContext,
-  useContext,
-  useMemo,
-  type ReactNode, useState, useCallback,
+    createContext,
+    useContext,
+    useMemo,
+    type ReactNode, useState, useCallback,
 } from "react";
 
-import { OdooClient } from "../integrations/OdooClient.ts";
-import type { OdooClientOptions } from "../types/types.ts";
+import {OdooClient} from "../integrations/OdooClient.ts";
+import type {OdooClientOptions} from "../types/types.ts";
 
 
 // ─── Context value ────────────────────────────────────────────────────────────
 
 export interface OdooContextValue {
-  client: OdooClient;
-  /**
-   * Auth mode inferred from the options passed to `<OdooProvider>`:
-   * - `"app"`  — `username` + `apiKey` were supplied; all requests share them.
-   * - `"user"` — no credentials in options; each user sets their own key.
-   */
-  authMode: "app" | "user";
-  /**
-   * True when credentials are available (always true in app mode;
-   * true in user mode only after `login()` has been called).
-   */
-  isAuthenticated: boolean;
-  /** Active username, or null when no user credentials are set (user mode). */
-  username: string | null;
-  /**
-   * Set the active user's credentials (user-level auth mode).
-   * Has no effect in app mode.
-   */
-  login: (username: string, apiKey: string) => void;
-  /**
-   * Clear the active user's credentials (user-level auth mode).
-   * Has no effect in app mode.
-   */
-  logout: () => void;
+    client: OdooClient;
+    /**
+     * - `"app"`  — `apiKey` was provided in options; all requests share it.
+     * - `"user"` — no `apiKey` in options; each user must supply their own key.
+     */
+    authMode: "app" | "user";
+    /**
+     * Whether the client has a working API key.
+     * Always `true` in app mode. In user mode, `true` once `saveApiKey()` has
+     * been called.
+     */
+    isConnected: boolean;
+    /** The Odoo username this client authenticates as (from options). */
+    username: string;
+    /**
+     * Store the user's personal API key on the client.
+     * Only meaningful in user mode; no-op in app mode.
+     */
+    saveApiKey: (apiKey: string) => void;
+    /**
+     * Remove the user's API key.
+     * Only meaningful in user mode; no-op in app mode.
+     */
+    clearApiKey: () => void;
 }
+
 
 const OdooContext = createContext<OdooContextValue | null>(null);
 
@@ -44,14 +45,14 @@ const OdooContext = createContext<OdooContextValue | null>(null);
 // ─── Provider ─────────────────────────────────────────────────────────────────
 
 export interface OdooProviderProps {
-  /**
-   * Connection options including `baseUrl`, `db`, `username`, and `apiKey`.
-   * The client is recreated only when `baseUrl` or `db` changes, so it is
-   * safe to derive `options` inside a component as long as those two values
-   * are stable (e.g. from env vars).
-   */
-  options: OdooClientOptions;
-  children: ReactNode;
+    /**
+     * Connection options including `baseUrl`, `db`, `username`, and `apiKey`.
+     * The client is recreated only when `baseUrl` or `db` changes, so it is
+     * safe to derive `options` inside a component as long as those two values
+     * are stable (e.g. from env vars).
+     */
+    options: OdooClientOptions;
+    children: ReactNode;
 }
 
 /**
@@ -70,54 +71,63 @@ export interface OdooProviderProps {
  *   <App />
  * </OdooProvider>
  */
-export function OdooProvider({ options, children }: OdooProviderProps) {
-  const authMode: "app" | "user" =
-      options.username && options.apiKey ? "app" : "user";
+export function OdooProvider({options, children}: OdooProviderProps) {
+    const authMode: "app" | "user" = options.apiKey ? "app" : "user";
 
-  // Stable client — recreated only when the base connection params change.
-  const client = useMemo(
-      () => new OdooClient(options),
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-      [options.baseUrl, options.db, options.username, options.apiKey]
-  );
+    const client = useMemo(
+        () => new OdooClient(options),
+        // Recreate when any of the stable connection params change.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [options.baseUrl, options.db, options.username, options.apiKey]
+    );
 
-  // Track user-level auth state in React so consumers re-render on change.
-  const [username, setUsername] = useState<string | null>(null);
+    // Mirror the "has key" state in React so consumers re-render correctly.
+    const [hasUserKey, setHasUserKey] = useState(false);
 
-  const login = useCallback(
-      (uname: string, apiKey: string) => {
-        client.setCredentials(uname, apiKey);
-        setUsername(uname);
-      },
-      [client]
-  );
+    const saveApiKey = useCallback(
+        (apiKey: string) => {
+            if (authMode === "user") {
+                client.setApiKey(apiKey);
+                setHasUserKey(true);
+            }
+        },
+        [client, authMode]
+    );
 
-  const logout = useCallback(() => {
-    client.clearCredentials();
-    setUsername(null);
-  }, [client]);
+    const clearApiKey = useCallback(() => {
+        if (authMode === "user") {
+            client.clearApiKey();
+            setHasUserKey(false);
+        }
+    }, [client, authMode]);
 
-  const isAuthenticated =
-      authMode === "app" ? true : username !== null;
+    const isConnected = authMode === "app" ? true : hasUserKey;
 
-  const value = useMemo<OdooContextValue>(
-      () => ({ client, authMode, isAuthenticated, username, login, logout }),
-      [client, authMode, isAuthenticated, username, login, logout]
-  );
+    const value = useMemo<OdooContextValue>(
+        () => ({
+            client,
+            authMode,
+            isConnected,
+            username: options.username,
+            saveApiKey,
+            clearApiKey,
+        }),
+        [client, authMode, isConnected, options.username, saveApiKey, clearApiKey]
+    );
 
-  return <OdooContext.Provider value={value}>{children}</OdooContext.Provider>;
+    return <OdooContext.Provider value={value}>{children}</OdooContext.Provider>;
 }
 
 // ─── Internal hook ────────────────────────────────────────────────────────────
 
 /** @internal – used by the other hooks; exported for advanced use cases */
 export function useOdoo(): OdooContextValue {
-  const ctx = useContext(OdooContext);
-  if (!ctx) {
-    throw new Error(
-        "useOdoo() must be called inside an <OdooProvider>. " +
-        "Wrap your component tree with <OdooProvider options={...}>."
-    );
-  }
-  return ctx;
+    const ctx = useContext(OdooContext);
+    if (!ctx) {
+        throw new Error(
+            "useOdoo() must be called inside an <OdooProvider>. " +
+            "Wrap your component tree with <OdooProvider options={...}>."
+        );
+    }
+    return ctx;
 }

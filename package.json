@@ -1,11 +1,12 @@
 {
   "name": "odoo-react-json2-api",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "React library for Odoo using the external JSON 2 API with api key",
   "keywords": [
     "odoo",
     "react",
-    "json2api"
+    "json2api",
+    "api"
   ],
   "license": "MIT",
   "author": "Yentl Bekaert",

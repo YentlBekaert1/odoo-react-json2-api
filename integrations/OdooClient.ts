@@ -4,14 +4,14 @@ let _requestId = 1;
 const nextId = () => _requestId++;
 
 export class OdooJsonRpcError extends Error {
-  constructor(
-      message: string,
-      public readonly code?: number,
-      public readonly data?: unknown
-  ) {
-    super(message);
-    this.name = "OdooJsonRpcError";
-  }
+    constructor(
+        message: string,
+        public readonly code?: number,
+        public readonly data?: unknown
+    ) {
+        super(message);
+        this.name = "OdooJsonRpcError";
+    }
 }
 
 /**
@@ -25,263 +25,266 @@ export class OdooJsonRpcError extends Error {
  *   Settings → (enable developer mode) → Technical → API Keys → New
  */
 export class OdooClient {
-  private readonly baseUrl: string;
-  private readonly db: string;
-  private readonly extraHeaders: Record<string, string>;
-  private readonly timeoutMs: number;
+    private readonly baseUrl: string;
+    private readonly db: string;
+    private readonly username: string;
+    private readonly extraHeaders: Record<string, string>;
+    private readonly timeoutMs: number;
 
-  /** Pre-built Basic auth header from app-level credentials, or null. */
-  private readonly appAuthHeader: string | null;
+    /** Pre-built Basic auth header from the app-level key, or null. */
+    private readonly appAuthHeader: string | null;
 
-  /** Runtime per-user credentials (overrides app-level when set). */
-  private userCredentials: OdooCredentials | null = null;
+    /** Runtime API key supplied by the user (overrides app-level when set). */
+    private userApiKey: string | null = null;
 
-  constructor(options: OdooClientOptions) {
-    this.baseUrl     = options.baseUrl.replace(/\/$/, "");
-    this.db          = options.db;
-    this.extraHeaders = options.headers ?? {};
-    this.timeoutMs   = options.timeoutMs ?? 30_000;
+    constructor(options: OdooClientOptions) {
+        this.baseUrl = options.baseUrl.replace(/\/$/, "");
+        this.db = options.db;
+        this.username = options.username;
+        this.extraHeaders = options.headers ?? {};
+        this.timeoutMs = options.timeoutMs ?? 30_000;
 
-    this.appAuthHeader =
-        options.username && options.apiKey
+        this.appAuthHeader = options.apiKey
             ? OdooClient.buildBasicHeader(options.username, options.apiKey)
             : null;
-  }
-
-  // ─── Credential helpers ────────────────────────────────────────────────────
-
-  private static buildBasicHeader(username: string, apiKey: string): string {
-    return "Basic " + btoa(`${username}:${apiKey}`);
-  }
-
-  /**
-   * Set (or replace) per-user credentials at runtime.
-   * These take precedence over any app-level credentials.
-   */
-  setCredentials(username: string, apiKey: string): void {
-    this.userCredentials = { username, apiKey };
-  }
-
-  /**
-   * Clear per-user credentials (e.g. on logout).
-   * If app-level credentials are configured, those continue to be used.
-   */
-  clearCredentials(): void {
-    this.userCredentials = null;
-  }
-
-  /** Returns true if any credentials (app- or user-level) are available. */
-  get hasCredentials(): boolean {
-    return this.userCredentials !== null || this.appAuthHeader !== null;
-  }
-
-  /** The active username, or null if no credentials are set. */
-  get activeUsername(): string | null {
-    return this.userCredentials?.username ?? null;
-  }
-
-  private get authHeader(): string {
-    if (this.userCredentials) {
-      return OdooClient.buildBasicHeader(
-          this.userCredentials.username,
-          this.userCredentials.apiKey
-      );
-    }
-    if (this.appAuthHeader) {
-      return this.appAuthHeader;
-    }
-    throw new OdooJsonRpcError(
-        "No credentials available. " +
-        "Either provide `username` + `apiKey` in OdooClientOptions (app-level), " +
-        "or call `client.setCredentials(username, apiKey)` / use `useOdooUserAuth()` (user-level)."
-    );
-  }
-
-  // ─── Low-level RPC ─────────────────────────────────────────────────────────
-
-  /**
-   * Send a raw JSON-RPC 2.0 request to `path`.
-   * You rarely need to call this directly; use the ORM helpers instead.
-   */
-  async rpc<T = unknown>(
-      path: string,
-      params: Record<string, unknown>
-  ): Promise<T> {
-    const body: JsonRpcRequest = {
-      jsonrpc: "2.0",
-      method: "call",
-      id: nextId(),
-      params,
-    };
-
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
-
-    let response: Response;
-    try {
-      response = await fetch(`${this.baseUrl}${path}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: this.authHeader,
-          ...this.extraHeaders,
-        },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timer);
     }
 
-    if (!response.ok) {
-      throw new OdooJsonRpcError(
-          `HTTP ${response.status}: ${response.statusText}`,
-          response.status
-      );
+    // ─── Credential helpers ────────────────────────────────────────────────────
+
+    private static buildBasicHeader(username: string, apiKey: string): string {
+        return "Basic " + btoa(`${username}:${apiKey}`);
     }
 
-    const json: JsonRpcResponse<T> = await response.json();
-
-    if (json.error) {
-      throw new OdooJsonRpcError(
-          json.error.data?.message ?? json.error.message,
-          json.error.code,
-          json.error.data
-      );
+    /**
+     * Set (or replace) the user's personal API key at runtime.
+     * The username is already known from the provider options.
+     *
+     * Call this when the user saves their API key in their account settings.
+     */
+    setApiKey(apiKey: string): void {
+        this.userApiKey = apiKey;
     }
 
-    return json.result as T;
-  }
+    /**
+     * Remove the user's runtime API key.
+     * Falls back to the app-level key if one was configured.
+     */
+    clearApiKey(): void {
+        this.userApiKey = null;
+    }
 
-  // ─── ORM helpers ───────────────────────────────────────────────────────────
+    /**
+     * True when any credentials (app-level or user-supplied) are available.
+     */
+    get isConnected(): boolean {
+        return this.userApiKey !== null || this.appAuthHeader !== null;
+    }
 
-  /**
-   * Call any method on an Odoo model via `/web/dataset/call_kw`.
-   * This is the building block for all higher-level helpers.
-   */
-  async callKw<T = unknown>(
-      model: string,
-      method: string,
-      args: unknown[] = [],
-      kwargs: Record<string, unknown> = {}
-  ): Promise<T> {
-    return this.rpc<T>("/web/dataset/call_kw", {
-      model,
-      method,
-      args,
-      kwargs: {
-        context: { lang: "en_US", tz: "UTC" },
-        ...kwargs,
-      },
-    });
-  }
+    /** The fixed Odoo username this client authenticates as. */
+    get activeUsername(): string {
+        return this.username;
+    }
 
-  /**
-   * Search for records matching `domain` and return the requested fields.
-   *
-   * @example
-   * const partners = await client.searchRead("res.partner",
-   *   [["is_company", "=", true]],
-   *   { fields: ["id", "name", "email"], limit: 50 }
-   * );
-   */
-  async searchRead<T = Record<string, unknown>>(
-      model: string,
-      domain: OdooDomain = [],
-      options: SearchReadOptions = {}
-  ): Promise<T[]> {
-    return this.callKw<T[]>(model, "search_read", [domain], {
-      fields:  options.fields  ?? [],
-      limit:   options.limit   ?? 0,
-      offset:  options.offset  ?? 0,
-      order:   options.order   ?? "",
-      context: options.context ?? {},
-    });
-  }
+    private get authHeader(): string {
+        // User-supplied key takes precedence over the app-level key.
+        if (this.userApiKey !== null) {
+            return OdooClient.buildBasicHeader(this.username, this.userApiKey);
+        }
+        if (this.appAuthHeader !== null) {
+            return this.appAuthHeader;
+        }
+        throw new OdooJsonRpcError(
+            `No API key available for "${this.username}". ` +
+            "Either provide `apiKey` in OdooClientOptions (app-level), " +
+            "or call `client.setApiKey(key)` / use the `useOdooApiKey()` hook."
+        );
+    }
 
-  /**
-   * Search and return only the matching record IDs.
-   */
-  async search(
-      model: string,
-      domain: OdooDomain = [],
-      options: { limit?: number; offset?: number; order?: string } = {}
-  ): Promise<number[]> {
-    return this.callKw<number[]>(model, "search", [domain], options);
-  }
+    // ─── Low-level RPC ─────────────────────────────────────────────────────────
 
-  /**
-   * Read specific fields of records by their IDs.
-   */
-  async read<T = Record<string, unknown>>(
-      model: string,
-      ids: number[],
-      fields: string[] = []
-  ): Promise<T[]> {
-    return this.callKw<T[]>(model, "read", [ids], { fields });
-  }
+    /**
+     * Send a raw JSON-RPC 2.0 request to `path`.
+     * You rarely need to call this directly; use the ORM helpers instead.
+     */
+    async rpc<T = unknown>(
+        path: string,
+        params: Record<string, unknown>
+    ): Promise<T> {
+        const body: JsonRpcRequest = {
+            jsonrpc: "2.0",
+            method: "call",
+            id: nextId(),
+            params,
+        };
 
-  /**
-   * Create a new record and return its ID.
-   */
-  async create(
-      model: string,
-      values: Record<string, unknown>
-  ): Promise<number> {
-    return this.callKw<number>(model, "create", [values]);
-  }
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), this.timeoutMs);
 
-  /**
-   * Update existing records.
-   */
-  async write(
-      model: string,
-      ids: number[],
-      values: Record<string, unknown>
-  ): Promise<boolean> {
-    return this.callKw<boolean>(model, "write", [ids, values]);
-  }
+        let response: Response;
+        try {
+            response = await fetch(`${this.baseUrl}${path}`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Authorization: this.authHeader,
+                    ...this.extraHeaders,
+                },
+                body: JSON.stringify(body),
+                signal: controller.signal,
+            });
+        } finally {
+            clearTimeout(timer);
+        }
 
-  /**
-   * Delete records.
-   */
-  async unlink(model: string, ids: number[]): Promise<boolean> {
-    return this.callKw<boolean>(model, "unlink", [ids]);
-  }
+        if (!response.ok) {
+            throw new OdooJsonRpcError(
+                `HTTP ${response.status}: ${response.statusText}`,
+                response.status
+            );
+        }
 
-  /**
-   * Count records matching a domain.
-   */
-  async searchCount(model: string, domain: OdooDomain = []): Promise<number> {
-    return this.callKw<number>(model, "search_count", [domain]);
-  }
+        const json: JsonRpcResponse<T> = await response.json();
 
-  /**
-   * Retrieve field definitions for a model.
-   */
-  async fieldsGet(
-      model: string,
-      attributes: string[] = ["string", "type", "required"]
-  ): Promise<Record<string, Record<string, unknown>>> {
-    return this.callKw(model, "fields_get", [], { attributes });
-  }
+        if (json.error) {
+            throw new OdooJsonRpcError(
+                json.error.data?.message ?? json.error.message,
+                json.error.code,
+                json.error.data
+            );
+        }
 
-  /**
-   * Call any arbitrary ORM method on a model (e.g. `read_group`, `name_search`).
-   *
-   * @example
-   * const groups = await client.callMethod(
-   *   "sale.order",
-   *   "read_group",
-   *   [[["state", "=", "sale"]], ["amount_total:sum", "state"], ["state"]]
-   * );
-   */
-  async callMethod<T = unknown>(
-      model: string,
-      method: string,
-      args: unknown[] = [],
-      kwargs: Record<string, unknown> = {}
-  ): Promise<T> {
-    return this.callKw<T>(model, method, args, kwargs);
-  }
+        return json.result as T;
+    }
+
+    // ─── ORM helpers ───────────────────────────────────────────────────────────
+
+    /**
+     * Call any method on an Odoo model via `/web/dataset/call_kw`.
+     * This is the building block for all higher-level helpers.
+     */
+    async callKw<T = unknown>(
+        model: string,
+        method: string,
+        args: unknown[] = [],
+        kwargs: Record<string, unknown> = {}
+    ): Promise<T> {
+        return this.rpc<T>("/web/dataset/call_kw", {
+            model,
+            method,
+            args,
+            kwargs: {
+                context: {lang: "en_US", tz: "UTC"},
+                ...kwargs,
+            },
+        });
+    }
+
+    /**
+     * Search for records matching `domain` and return the requested fields.
+     *
+     * @example
+     * const partners = await client.searchRead("res.partner",
+     *   [["is_company", "=", true]],
+     *   { fields: ["id", "name", "email"], limit: 50 }
+     * );
+     */
+    async searchRead<T = Record<string, unknown>>(
+        model: string,
+        domain: OdooDomain = [],
+        options: SearchReadOptions = {}
+    ): Promise<T[]> {
+        return this.callKw<T[]>(model, "search_read", [domain], {
+            fields: options.fields ?? [],
+            limit: options.limit ?? 0,
+            offset: options.offset ?? 0,
+            order: options.order ?? "",
+            context: options.context ?? {},
+        });
+    }
+
+    /**
+     * Search and return only the matching record IDs.
+     */
+    async search(
+        model: string,
+        domain: OdooDomain = [],
+        options: { limit?: number; offset?: number; order?: string } = {}
+    ): Promise<number[]> {
+        return this.callKw<number[]>(model, "search", [domain], options);
+    }
+
+    /**
+     * Read specific fields of records by their IDs.
+     */
+    async read<T = Record<string, unknown>>(
+        model: string,
+        ids: number[],
+        fields: string[] = []
+    ): Promise<T[]> {
+        return this.callKw<T[]>(model, "read", [ids], {fields});
+    }
+
+    /**
+     * Create a new record and return its ID.
+     */
+    async create(
+        model: string,
+        values: Record<string, unknown>
+    ): Promise<number> {
+        return this.callKw<number>(model, "create", [values]);
+    }
+
+    /**
+     * Update existing records.
+     */
+    async write(
+        model: string,
+        ids: number[],
+        values: Record<string, unknown>
+    ): Promise<boolean> {
+        return this.callKw<boolean>(model, "write", [ids, values]);
+    }
+
+    /**
+     * Delete records.
+     */
+    async unlink(model: string, ids: number[]): Promise<boolean> {
+        return this.callKw<boolean>(model, "unlink", [ids]);
+    }
+
+    /**
+     * Count records matching a domain.
+     */
+    async searchCount(model: string, domain: OdooDomain = []): Promise<number> {
+        return this.callKw<number>(model, "search_count", [domain]);
+    }
+
+    /**
+     * Retrieve field definitions for a model.
+     */
+    async fieldsGet(
+        model: string,
+        attributes: string[] = ["string", "type", "required"]
+    ): Promise<Record<string, Record<string, unknown>>> {
+        return this.callKw(model, "fields_get", [], {attributes});
+    }
+
+    /**
+     * Call any arbitrary ORM method on a model (e.g. `read_group`, `name_search`).
+     *
+     * @example
+     * const groups = await client.callMethod(
+     *   "sale.order",
+     *   "read_group",
+     *   [[["state", "=", "sale"]], ["amount_total:sum", "state"], ["state"]]
+     * );
+     */
+    async callMethod<T = unknown>(
+        model: string,
+        method: string,
+        args: unknown[] = [],
+        kwargs: Record<string, unknown> = {}
+    ): Promise<T> {
+        return this.callKw<T>(model, method, args, kwargs);
+    }
 }
